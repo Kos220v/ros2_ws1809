@@ -88,6 +88,50 @@ class TestVerdicts:
         assert r.verdict == D.MOVED
 
 
+class TestConstantBiasIsNotMotion:
+    """Реальный случай с робота: неподвижный робот, wx=-5.6 °/с константой.
+
+    Раньше вердикт был MOVED («робот двигался») — детектор считал движением
+    абсолютный пик |w|. Теперь движение определяется по отклонениям от
+    медианы, и константный bias честно даёт GYRO_BIAS.
+    """
+
+    def test_robot_case_gyro_bias(self):
+        # цифры из отчёта gyro_drift_check: дрейф +113.24 °/мин,
+        # средние wz=+0.971, wx=-5.608, wy=-0.327 °/с, сигма ~0.037
+        yaw_rate = math.radians(113.24 / 60.0)          # рад/с курса
+        s = _seq(3000, 0.02, lambda t: yaw_rate * t,
+                 wx=math.radians(-5.608),
+                 wy=math.radians(-0.327),
+                 wz=math.radians(0.971))
+        r = D.analyze(s)
+        assert r.moved is False
+        assert r.verdict == D.GYRO_BIAS
+        assert abs(r.wx_med_dps - (-5.608)) < 1e-6
+        assert abs(r.wz_med_dps - 0.971) < 1e-6
+        assert r.max_dev_dps < 0.5          # рывков нет
+        assert r.max_w_dps > 5.0            # но абсолютный пик большой (bias)
+
+    def test_bias_without_yaw_drift_is_ok(self):
+        # магнитный якорь держит курс (дрейф ~0), хотя bias гироскопа есть:
+        # для маршрута это приемлемо, медианы показывают сам bias
+        s = _seq(3000, 0.02, lambda t: 0.5,
+                 wx=math.radians(-5.6), wz=math.radians(0.97))
+        r = D.analyze(s)
+        assert r.verdict == D.OK
+        assert r.moved is False
+        assert abs(r.wz_med_dps - 0.97) < 1e-6
+
+    def test_single_spike_on_top_of_bias_is_moved(self):
+        # константный bias + один толчок -20 °/с по wy -> MOVED
+        s = _seq(1500, 0.02, lambda t: 0.3,
+                 wx=math.radians(-5.6), wz=math.radians(0.97))
+        s[700] = (s[700][0], s[700][1],
+                  s[700][2], s[700][3] - math.radians(20.0), s[700][4])
+        r = D.analyze(s)
+        assert r.verdict == D.MOVED
+
+
 class TestNumbers:
     def test_unwrap_across_pi(self):
         # курс идёт 179° -> 181° (через -179°): разворот не должен дать -358°

@@ -7,15 +7,22 @@
 — свойство кватерниона платы, и причина одна из двух:
 
 - смещение нуля гироскопа (bias, зависит от температуры) -> курс уплывает
-  с ПОСТОЯННОЙ скоростью, средняя wz совпадает со скоростью дрейфа;
+  с постоянной скоростью, средняя wz совпадает со скоростью дрейфа;
 - слабый магнитный якорь (плохая калибровка QMC5883L, железо рядом) ->
   wz около нуля, а курс блуждает туда-сюда.
 
 Вердикт различает эти случаи по отношению «скорость дрейфа курса / средняя
 wz», чтобы подсказать правильную калибровку (gyro_calib или mag_calib).
+
+Движение/покой. Реальный случай с робота: при полностью неподвижном роботе
+wx = -5.6 °/с ПОСТОЯННО (сигма 0.04) — это не движение, а то самое
+смещение нуля, которое и надо калибровать. Поэтому «движением» считаются
+только ОТКЛОНЕНИЯ от медианы каждого канала (толчок, качание, вибрация):
+константный bias на отклонения не влияет и вердикт MOVED не даёт.
 """
 
 import math
+import statistics
 from dataclasses import dataclass
 from typing import List, Sequence, Tuple
 
@@ -31,10 +38,10 @@ MAG = "MAG"                  # wz ~ 0, курс блуждает: калибро
 # Пороги по умолчанию (deg/min)
 WARN_DRIFT_DPM = 1.0     # выше — заметно, нужна калибровка
 FAIL_DRIFT_DPM = 10.0    # выше — курс ведёт ощутимо, ехать по маршруту нельзя
-# Угловая скорость (deg/s по любой оси), считающаяся движением робота
+# Отклонение угловой скорости от медианы канала (deg/s), считающееся движением
 MOTION_THRESH_DPS = 3.0
-# Отношение (скорость дрейфа курса) / (средняя wz) внутри этой полосы
-# считается совпадением с гироскопом
+# Отношение (скорость дрейфа курса) / (интеграл медианной wz) внутри этой
+# полосы считается совпадением с гироскопом
 RATIO_BAND = (0.4, 2.5)
 
 
@@ -47,8 +54,12 @@ class DriftResult:
     wx_mean_dps: float
     wy_mean_dps: float
     wz_mean_dps: float
+    wx_med_dps: float         # медианы = оценка смещения нуля (bias), deg/s
+    wy_med_dps: float
+    wz_med_dps: float
     wz_sigma_dps: float
-    max_w_dps: float
+    max_w_dps: float          # максимум |w| «как есть» (включая константный bias)
+    max_dev_dps: float        # максимум отклонения от медианы — реальные рывки
     moved: bool
     verdict: str
 
@@ -58,12 +69,15 @@ class DriftResult:
             return ("дрейф в норме — калибровка не требуется "
                     f"({self.drift_dpm:+.2f}°/мин)")
         if self.verdict == MOVED:
-            return ("робот двигался во время замера — повторите, "
+            return ("робот двигался во время замера (пик отклонения "
+                    f"{self.max_dev_dps:.1f}°/с > порога) — повторите, "
                     "не касаясь робота")
         if self.verdict == GYRO_BIAS:
             return ("дрейф совпадает с интегралом wz — смещение нуля "
                     "гироскопа: вызовите сервис gyro_calib при неподвижном "
-                    "роботе, затем save_flash, и повторите замер")
+                    "роботе, затем save_flash, и повторите замер. Если сервис "
+                    "не находится (waiting for service) — см. раздел "
+                    "«waiting for service» в docs/CALIBRATION.md")
         return ("wz около нуля, а курс блуждает — магнитный якорь слаб: "
                 "выполните mag_calib_start/stop_save (см. docs/CALIBRATION.md) "
                 "и исключите железо/магниты рядом с платой")
@@ -114,17 +128,28 @@ def analyze(samples: Sequence[Sample],
     wx_m = sum(wx) / n
     wy_m = sum(wy) / n
     wz_m = sum(wz) / n
+    wx_med = statistics.median(wx)
+    wy_med = statistics.median(wy)
+    wz_med = statistics.median(wz)
     wz_sigma = math.sqrt(sum((w - wz_m) ** 2 for w in wz) / n)
-    max_w = max(max(abs(v) for v in w) for w in (wx, wy, wz))
-    max_w_dps = math.degrees(max_w)
 
-    moved = max_w_dps > motion_thresh_dps
+    # Настоящее движение = отклонение от медианы канала (толчки/качание).
+    # Константный bias отклонений не создаёт и движением не считается.
+    max_dev = 0.0
+    for axis, med in ((wx, wx_med), (wy, wy_med), (wz, wz_med)):
+        for v in axis:
+            d = abs(v - med)
+            if d > max_dev:
+                max_dev = d
+    max_w = max(max(abs(v) for v in w) for w in (wx, wy, wz))
+
+    moved = math.degrees(max_dev) > motion_thresh_dps
     if moved:
         verdict = MOVED
     elif abs(drift_dpm) < warn_dpm:
         verdict = OK
     else:
-        gyro_rate_dpm = math.degrees(wz_m) * 60.0  # ожидаемый дрейф от bias
+        gyro_rate_dpm = math.degrees(wz_med) * 60.0  # ожидаемый дрейф от bias
         if abs(gyro_rate_dpm) > 1e-6:
             ratio = drift_dpm / gyro_rate_dpm
         else:
@@ -142,8 +167,12 @@ def analyze(samples: Sequence[Sample],
         wx_mean_dps=math.degrees(wx_m),
         wy_mean_dps=math.degrees(wy_m),
         wz_mean_dps=math.degrees(wz_m),
+        wx_med_dps=math.degrees(wx_med),
+        wy_med_dps=math.degrees(wy_med),
+        wz_med_dps=math.degrees(wz_med),
         wz_sigma_dps=math.degrees(wz_sigma),
-        max_w_dps=max_w_dps,
+        max_w_dps=math.degrees(max_w),
+        max_dev_dps=math.degrees(max_dev),
         moved=moved,
         verdict=verdict,
     )

@@ -21,7 +21,10 @@
     duration_s         длительность замера, с (60)
     warn_dpm           порог «дрейф заметен», °/мин (1.0)
     fail_dpm           порог «ехать нельзя», °/мин (10.0)
-    motion_thresh_dps  пик угловой скорости, считающийся движением, °/с (3.0)
+    motion_thresh_dps  отклонение угловой скорости от медианы канала,
+                       считающееся движением, °/с (3.0)
+    calib_service      сервис gyro_calib моста, проверяется доступность
+                       (по умолч. /imu/imu_stm32_bridge/gyro_calib)
 """
 
 import math
@@ -32,6 +35,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Imu
+from std_srvs.srv import Trigger
 
 from .drift_check import analyze
 
@@ -53,12 +57,15 @@ class GyroDriftCheck(Node):
         p("warn_dpm", 1.0)
         p("fail_dpm", 10.0)
         p("motion_thresh_dps", 3.0)
+        p("calib_service", "/imu/imu_stm32_bridge/gyro_calib")
 
         g = self.get_parameter
         self.duration = float(g("duration_s").value)
         self.warn_dpm = float(g("warn_dpm").value)
         self.fail_dpm = float(g("fail_dpm").value)
         self.motion_thresh = float(g("motion_thresh_dps").value)
+        self.calib_service = str(g("calib_service").value)
+        self.calib_cli = self.create_client(Trigger, self.calib_service)
 
         self.samples = []
         self.t_first = None
@@ -112,6 +119,19 @@ class GyroDriftCheck(Node):
             f"(сигма {res.wz_sigma_dps:.3f}), "
             f"wx={res.wx_mean_dps:+.3f}, wy={res.wy_mean_dps:+.3f}, "
             f"пик |w|={res.max_w_dps:.1f} °/с")
+        log(f"смещения нуля (медианы): wx={res.wx_med_dps:+.3f}, "
+            f"wy={res.wy_med_dps:+.3f}, wz={res.wz_med_dps:+.3f} °/с; "
+            f"макс. отклонение (рывки) {res.max_dev_dps:.2f} °/с")
+        if self.calib_cli.service_is_ready():
+            log(f"сервис gyro_calib ({self.calib_service}): найден")
+        else:
+            log(f"ВНИМАНИЕ: сервис gyro_calib ({self.calib_service}) НЕ "
+                "найден — вызов калибровки не пройдёт (waiting for "
+                "service). Диагностика: ros2 service list | grep calib; "
+                "если пусто — работает ли мост (imu_stm32_bridge в другом "
+                "пространстве имён?), не старая ли сборка (пересоберите "
+                "imu_stm32_bridge и перезапустите start.launch.py), "
+                "и обновите кэш графа: ros2 daemon stop && ros2 daemon start")
         log(_VERDICT_TITLE.get(res.verdict, res.verdict))
         log("Что делать: " + res.recommendation)
         return 0 if res.verdict == "OK" else 1
