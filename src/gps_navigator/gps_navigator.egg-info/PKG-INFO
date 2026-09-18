@@ -1,7 +1,0 @@
-Metadata-Version: 2.1
-Name: gps-navigator
-Version: 0.2.0
-Summary: Nav2 + robot_localization: движение по GPS-маршруту с объездом препятствий по лидару, предполётная проверка, документация.
-Maintainer: admin
-Maintainer-email: admin@example.com
-License: Apache License 2.0

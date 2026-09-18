@@ -1,7 +1,10 @@
 # артефакты сборки и кэши (в git не храним)
-__pycache__/
+*.egg
+*.egg-info/
 *.py[cod]
 .pytest_cache/
+__pycache__/
 build/
+dist/
 install/
 log/
