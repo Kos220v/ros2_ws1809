@@ -96,6 +96,18 @@ source install/setup.bash
 grep -c probe_geo_serialization install/gps_mission/lib/python3.12/site-packages/gps_mission/gps_mission_node.py
 ```
 
+Если `~/ros2_ws` — НЕ git-клон (файлы переносятся вручную), обновление такое:
+
+```bash
+git clone --depth 1 https://github.com/Kos220v/ros2_ws1809 /tmp/rep
+rsync -a --delete /tmp/rep/src/gps_mission/   ~/ros2_ws/src/gps_mission/
+rsync -a --delete /tmp/rep/src/gps_navigator/ ~/ros2_ws/src/gps_navigator/
+rsync -a --delete /tmp/rep/src/robot_odom/    ~/ros2_ws/src/robot_odom/
+cp /tmp/rep/src/project_start/config/waypoints.yaml ~/ros2_ws/src/project_start/config/waypoints.yaml
+rm -rf /tmp/rep
+# затем colcon build --packages-select ... (см. выше) и source install/setup.bash
+```
+
 ## Известная проблема: abort «geo_pose convert_from_py Assertion failed»
 
 Симптом: при старте маршрута процесс `gps_mission_node` падает с
