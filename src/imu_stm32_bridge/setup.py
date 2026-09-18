@@ -23,6 +23,7 @@ setup(
     entry_points={
         'console_scripts': [
             'bridge_node = imu_stm32_bridge.bridge_node:main',
+            'gyro_drift_check = imu_stm32_bridge.gyro_drift_check:main',
         ],
     },
 )

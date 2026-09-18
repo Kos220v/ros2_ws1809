@@ -19,7 +19,7 @@ ROS 2 **Jazzy**, Raspberry Pi 5, Ubuntu 24.04.
 | Пакет | Назначение |
 |---|---|
 | `kolesa_control` | 2×VESC (FS75100) по UART; публикует `/odom/vesc` (только линейную скорость) |
-| `imu_stm32_bridge` | STM32 (MPU6050 + QMC5883L) → `/imu/data` (кватернион ENU), `/imu/mag`, калибровки |
+| `imu_stm32_bridge` | STM32 (MPU6050 + QMC5883L) → `/imu/data` (кватернион ENU), `/imu/mag`, калибровки, измеритель дрейфа `gyro_drift_check` |
 | `elrs_receiver` | пульт ELRS → `/cmd_vel/manual` |
 | `robot_odom` | эталонная одометрия: путь VESC + курс IMU → `/odom` (для калибровки и режима без Nav2) |
 | `gps_navigator` | **навигационный слой**: конфиги Nav2 и robot_localization, launch-файлы, предполётная проверка, документация |
