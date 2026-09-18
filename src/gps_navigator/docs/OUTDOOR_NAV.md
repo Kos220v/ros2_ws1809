@@ -112,20 +112,33 @@ python3 -c "from robot_localization.srv import SetDatum; r=SetDatum.Request(); p
 PYTHONPATH (часто `~/.local/...` или старый `install/` в underlay),
 затем `ros2 daemon stop` и перезапуск стека.
 
-Если ОБЕ проверки чистые, а abort всё равно повторяется (в т.ч. в
-`ros2 service call` из свежего терминала) — конвертация Python→C сломана
-на уровне установки ROS: типичная причина — смешанные версии apt-пакетов
-после частичного обновления. Лечение:
+Если ОБЕ проверки чистые, а abort всё равно повторяется — конвертация
+Python→C сломана на уровне установки ROS (импорт проходит, а
+сериализация падает; классика — смешанные версии apt-пакетов после
+частичного обновления). **Определяющий тест** (падает только битая
+установка; безопасен — уронит лишь собственный процесс зонда):
 
 ```bash
-sudo apt update
-sudo apt install --only-upgrade ros-jazzy-geographic-msgs ros-jazzy-rosidl*
-# или полнее: sudo apt full-upgrade
+python3 -c "from geographic_msgs.msg import GeoPose; from rclpy.serialization import serialize_message; serialize_message(GeoPose())" && echo OK
 ```
 
-Пока конвертер не чинен, миссии это не мешает: gps_mission вызывает
-SetDatum подпроцессом и следит за результатом (в логе — «datum
-установлен» либо предупреждение и datum по первому фиксу).
+Лечение:
+
+```bash
+sudo apt update && sudo apt full-upgrade
+sudo apt install --reinstall ros-jazzy-geographic-msgs ros-jazzy-rosidl-generator-py
+ros2 daemon stop
+# перезапустить стек
+```
+
+ВАЖНО: пока конвертация не починена, отправить GeoPose не может НИ один
+Python-процесс — ни gps_mission (action-цель содержит 18 GeoPoseStamped),
+ни `ros2 service call`, ни `ros2 action send_goal` (все падают с
+SIGABRT). C++-часть Nav2 не затронута — поэтому остальные узлы живут.
+gps_mission при старте сам зондирует сериализацию: если она сломана, он
+НЕ падает, а отклоняет старт с сообщением об apt-лечении (и datum не
+пытается отправить — его CLI упал бы так же; navsat берёт datum из
+первого фикса, это штатно).
 
 ### Datum и «прыжок» TF при его установке
 

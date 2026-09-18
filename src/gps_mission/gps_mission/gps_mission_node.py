@@ -52,6 +52,46 @@ from .waypoints_io import (
     route_length,
 )
 
+# --- Зонд сериализации GeoPose (Python -> C) -------------------------------
+# На установках со смешанными версиями apt-пакетов rosidl-конвертер
+# geographic_msgs падает с C-assert при ЛЮБОЙ отправке GeoPose из Python:
+# и ros2 service call, и отправка action-цели миссии (ROS-код C++ при этом
+# здоров). Зонд выполняется один раз в отдельном процессе: если он падает
+# (abort), миссию даже не пытаемся отправлять — узел остаётся жив и
+# подсказывает лечение, вместо бесконечного crash-loop'а.
+_PROBE_CMD = ("from geographic_msgs.msg import GeoPose; "
+              "from rclpy.serialization import serialize_message; "
+              "serialize_message(GeoPose())")
+_ENV_PROBE_DONE = False
+ENV_OK = True
+
+
+def probe_geo_serialization(logger=None) -> bool:
+    """Проверить (однократно), что Python может сериализовать GeoPose."""
+    global _ENV_PROBE_DONE, ENV_OK
+    if _ENV_PROBE_DONE:
+        return ENV_OK
+    _ENV_PROBE_DONE = True
+    try:
+        r = subprocess.run(
+            ["python3", "-c", _PROBE_CMD],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=15.0)
+        ENV_OK = (r.returncode == 0)
+    except (OSError, subprocess.TimeoutExpired):
+        ENV_OK = True    # проверить не удалось — не блокируем работу
+    if not ENV_OK and logger is not None:
+        logger.error(
+            "ОКРУЖЕНИЕ ROS СЛОМАНО: Python->C конвертация geographic_msgs "
+            "падает (C-assert rosidl). Отправка GeoPose невозможна НИОТКУДА "
+            "из Python (ни узлом, ни ros2 service/action call) — старт "
+            "маршрута будет отклоняться, пока установка не починена. "
+            "Лечение на роботе: sudo apt update && sudo apt full-upgrade; "
+            "если не помогло: sudo apt install --reinstall "
+            "ros-jazzy-geographic-msgs ros-jazzy-rosidl-generator-py; "
+            "затем перезапустить стек. C++-часть Nav2 не затронута.")
+    return ENV_OK
+
 
 class GpsMission(Node):
     def __init__(self):
@@ -107,8 +147,9 @@ class GpsMission(Node):
         self.datum_service = str(g("datum_service").value)
         # клиент только для проверки доступности сервиса (сам запрос шлёт
         # подпроцесс: конвертация GeoPose в python может быть сломана в
-        # окружении, см. _set_datum_async)
+        # окружении, см. probe_geo_serialization)
         self.datum_cli = self.create_client(SetDatum, self.datum_service)
+        self.env_ok = probe_geo_serialization(self.get_logger())
 
         self.create_service(Trigger, "~/start", self._srv_start)
         self.create_service(Trigger, "~/stop", self._srv_stop)
@@ -142,6 +183,17 @@ class GpsMission(Node):
         """
         if self.goal_handle is not None and not self.goal_handle.done():
             return False, "Миссия уже выполняется"
+
+        # Сломанный Python->C конвертер GeoPose: отправка цели всё равно
+        # уронила бы процесс (SIGABRT) — отказываем осмысленно.
+        if not probe_geo_serialization():
+            return False, (
+                "окружение ROS сломано: конвертация geographic_msgs "
+                "(Python->C) падает — старт невозможен. Лечение: "
+                "sudo apt update && sudo apt full-upgrade; затем "
+                "sudo apt install --reinstall ros-jazzy-geographic-msgs "
+                "ros-jazzy-rosidl-generator-py; перезапустить стек "
+                "(детали в логе узла при старте)")
 
         try:
             wps = load_waypoints(self.waypoints_file)
@@ -212,6 +264,11 @@ class GpsMission(Node):
         'ros2 service call' может висеть до таймаута, сервису ~/start
         нельзя задерживаться.
         """
+        if not probe_geo_serialization():
+            self.get_logger().warning(
+                "datum не отправляется: конвертация GeoPose сломана в этом "
+                "окружении — ноль `map` будет по первому GPS-фиксу")
+            return
         if not self.datum_cli.wait_for_service(timeout_sec=2.0):
             self.get_logger().warning(
                 f"сервис {self.datum_service} недоступен — ноль `map` будет "

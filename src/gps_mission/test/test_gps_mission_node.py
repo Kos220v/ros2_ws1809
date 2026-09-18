@@ -220,11 +220,17 @@ def _install_stubs():
 
 _SAVED = _install_stubs()
 
+import gps_mission.gps_mission_node as gmn
 from gps_mission.gps_mission_node import GpsMission  # noqa: E402
 
 # имена из заглушек для использования в тестах
 Trigger = sys.modules["std_srvs.srv"].Trigger
 NavSatFix = sys.modules["sensor_msgs.msg"].NavSatFix
+
+# Зонд сериализации в песочнице невозможен (нет rclpy) — считаем
+# окружение исправным по умолчанию; отдельный тест проверяет отказ.
+gmn._ENV_PROBE_DONE = True
+gmn.ENV_OK = True
 
 # Сразу восстанавливаем sys.modules: узел уже импортирован и держит ссылки
 # на наши заглушки в своём пространстве имён, а другим пакетам (например
@@ -242,9 +248,11 @@ del _SAVED
 def _restore_env():
     _StubNode.overrides = {}
     _ActionClient.server_up = False
+    gmn.ENV_OK = True
     yield
     _StubNode.overrides = {}
     _ActionClient.server_up = False
+    gmn.ENV_OK = True
 
 
 class TestNodeConstructs:
@@ -329,6 +337,18 @@ class TestModeCallback:
 
 
 class TestMissionActions:
+    def test_start_refused_when_env_broken(self):
+        # сломанный Python->C конвертер GeoPose: осмысленный отказ вместо
+        # SIGABRT процесса
+        gmn.ENV_OK = False
+        node = GpsMission()
+        ok, msg = node._start_mission()
+        assert ok is False
+        assert "окружение ROS сломано" in msg
+        assert "apt" in msg
+        assert node.state == "IDLE"
+        gmn.ENV_OK = True
+
     def test_start_with_unreachable_action_server(self, tmp_path):
         route = tmp_path / "w.yaml"
         route.write_text(
