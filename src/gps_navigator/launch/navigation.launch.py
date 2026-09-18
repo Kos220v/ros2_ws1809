@@ -95,7 +95,9 @@ def launch_setup(context, *args, **kwargs):
         ],
         remappings=[
             ('imu/data', '/imu/data'),
-            ('gps/fix', '/gps/fix'),
+            # питаемся от отфильтрованных фиксов (gps_fix_gate): один
+            # мультитрейновый прыжок не должен телепортировать map->odom
+            ('gps/fix', '/gps/fix/filtered'),
             ('odometry/filtered', '/odometry/filtered'),
         ],
     )
@@ -106,6 +108,19 @@ def launch_setup(context, *args, **kwargs):
     nav2_remappings = [('cmd_vel', '/cmd_vel/auto')]
     nav2_common = dict(output='screen', parameters=[nav2_params])
 
+    # ------------------------------------------------ GPS-гейт (антипрыжок)
+    # Фильтрует /gps/fix: отбрасывает фиксы с плохой ковариацией (HDOP) и
+    # «прыжки» (мультитрейн), которые телепортировали TF map->odom —
+    # симптом: «Sensor origin ... out of map bounds ... cannot raytrace».
+    gps_gate = Node(
+        package='gps_navigator',
+        executable='gps_fix_gate',
+        name='gps_fix_gate',
+        output='screen',
+        parameters=[{'gps_topic': '/gps/fix',
+                     'output_topic': '/gps/fix/filtered'}],
+    )
+
     # ------------------------------------------------ курс по GPS (антидрейф)
     # Направление перемещения между фиксами -> /gps/heading (pose0 в ekf_map).
     # Не даёт дрейфу кватерниона IMU накапливаться в map, пока робот едет.
@@ -114,7 +129,7 @@ def launch_setup(context, *args, **kwargs):
         executable='gps_heading',
         name='gps_heading',
         output='screen',
-        parameters=[{'gps_topic': '/gps/fix',
+        parameters=[{'gps_topic': '/gps/fix/filtered',
                      'output_topic': '/gps/heading',
                      'frame_id': 'map'}],
     )
@@ -177,6 +192,7 @@ def launch_setup(context, *args, **kwargs):
         ekf_odom,
         ekf_map,
         navsat,
+        gps_gate,
         gps_heading,
         controller_server,
         planner_server,

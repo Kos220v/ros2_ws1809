@@ -30,6 +30,7 @@ setup(
         'console_scripts': [
             'preflight_check = gps_navigator.preflight_check:main',
             'gps_heading = gps_navigator.gps_heading_node:main',
+            'gps_fix_gate = gps_navigator.gps_gate_node:main',
         ],
     },
 )

@@ -219,6 +219,8 @@ def test_navigation_launch_nodes(monkeypatch):
     expected = {
         "ekf_node": 2,
         "navsat_transform_node": 1,
+        "gps_fix_gate": 1,
+        "gps_heading": 1,
         "controller_server": 1,
         "planner_server": 1,
         "behavior_server": 1,
