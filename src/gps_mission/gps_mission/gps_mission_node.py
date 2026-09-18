@@ -31,6 +31,7 @@ FollowGPSWaypoints). Сам waypoints_follower через сервис `/fromLL`
 
 import os
 import subprocess
+import threading
 
 import rclpy
 from rclpy.action import ActionClient
@@ -38,6 +39,7 @@ from rclpy.node import Node
 
 from geographic_msgs.msg import GeoPoseStamped
 from nav2_msgs.action import FollowGPSWaypoints
+from robot_localization.srv import SetDatum
 from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Int8, String
 from std_srvs.srv import Trigger
@@ -103,6 +105,10 @@ class GpsMission(Node):
         self.client = ActionClient(self, FollowGPSWaypoints,
                                    str(g("action_name").value))
         self.datum_service = str(g("datum_service").value)
+        # клиент только для проверки доступности сервиса (сам запрос шлёт
+        # подпроцесс: конвертация GeoPose в python может быть сломана в
+        # окружении, см. _set_datum_async)
+        self.datum_cli = self.create_client(SetDatum, self.datum_service)
 
         self.create_service(Trigger, "~/start", self._srv_start)
         self.create_service(Trigger, "~/stop", self._srv_stop)
@@ -152,32 +158,14 @@ class GpsMission(Node):
             first = min(self.start_index, len(wps) - 1)
 
         # Будем ставить ноль `map` в первую точку маршрута: координаты в
-        # RViz будут около (0; 0), проще понимать, где робот. Вызов
-        # SetDatum делаем ПОДПРОЦЕССОМ (ros2 service call), а не своим
-        # клиентом: на одной из установок rosidl-конвертер geographic_msgs
-        # падал с C-assert при сериализации GeoPose, убивая весь узел
-        # gps_mission. Падение одноразового CLI-процесса узлу не вредит.
+        # RViz будут около (0; 0), проще понимать, где робот. Сам запрос
+        # SetDatum отправляет ПОДПРОЦЕСС (ros2 service call): на некоторых
+        # установках rosidl-конвертер geographic_msgs падает с C-assert
+        # при сериализации GeoPose — падение CLI-процесса узел не трогает.
+        # Если datum не пройдёт, navsat_transform возьмёт ноль `map` по
+        # первому GPS-фиксу — маршрут поедет и так.
         if self.set_datum:
-            args = [
-                "ros2", "service", "call", self.datum_service,
-                "robot_localization/srv/SetDatum",
-                ("{geo_pose: {position: {latitude: %.9f, longitude: %.9f, "
-                 "altitude: 0.0}, orientation: {w: 1.0}}}"
-                 % (wps[0].lat, wps[0].lon)),
-            ]
-            try:
-                subprocess.Popen(
-                    args,
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    start_new_session=True)
-                self.get_logger().info(
-                    f"datum -> {self.datum_service}: "
-                    f"{wps[0].lat:.7f}, {wps[0].lon:.7f} (отдельный процесс)")
-            except OSError as e:
-                self.get_logger().warning(
-                    f"Не удалось запустить 'ros2 service call' для datum: "
-                    f"{e}; ноль map будет по первому GPS-фиксу "
-                    "(navsat_transform)")
+            self._set_datum_async(wps[0])
 
         # Оценка длины маршрута (ENU-аппроксимация вокруг первой точки) —
         # только для лога, Nav2 считает путь сам.
@@ -215,6 +203,51 @@ class GpsMission(Node):
         return True, (f"Маршрут отправлен в Nav2: {len(wps)} точек, "
                       f"~{route_length(wps):.0f} м, "
                       f"loops={self.number_of_loops}, старт с точки {first}")
+
+    def _set_datum_async(self, wp):
+        """Ноль `map` в точку wp — подпроцессом, с отчётом о результате.
+
+        Клиент (self.datum_cli) используется только чтобы не запускать
+        CLI, когда navsat ещё не поднялся. Сам вызов — в фоновом потоке:
+        'ros2 service call' может висеть до таймаута, сервису ~/start
+        нельзя задерживаться.
+        """
+        if not self.datum_cli.wait_for_service(timeout_sec=2.0):
+            self.get_logger().warning(
+                f"сервис {self.datum_service} недоступен — ноль `map` будет "
+                "по первому GPS-фиксу (navsat_transform)")
+            return
+        args = [
+            "ros2", "service", "call", self.datum_service,
+            "robot_localization/srv/SetDatum",
+            ("{geo_pose: {position: {latitude: %.9f, longitude: %.9f, "
+             "altitude: 0.0}, orientation: {w: 1.0}}}"
+             % (wp.lat, wp.lon)),
+        ]
+        log = self.get_logger()
+
+        def _run():
+            try:
+                r = subprocess.run(
+                    args, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL, timeout=15.0)
+                if r.returncode == 0:
+                    log.info(
+                        f"datum установлен: {wp.lat:.7f}, {wp.lon:.7f}")
+                else:
+                    log.warning(
+                        f"datum не установлен (CLI код {r.returncode}, "
+                        "возможен abort конвертера GeoPose в этом "
+                        "окружении) — ноль `map` по первому GPS-фиксу")
+            except FileNotFoundError:
+                log.warning("'ros2' не найден — datum не установлен, "
+                            "ноль `map` по первому GPS-фиксу")
+            except subprocess.TimeoutExpired:
+                log.warning(f"datum: нет ответа от {self.datum_service} "
+                            "за 15 с — ноль `map` по первому GPS-фиксу")
+
+        threading.Thread(target=_run, daemon=True,
+                         name="datum-call").start()
 
     def _srv_stop(self, request, response):
         was_active = self._cancel_active("команда /stop")

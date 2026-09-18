@@ -184,6 +184,12 @@ def launch_setup(context, *args, **kwargs):
                     LaunchConfiguration('loops').perform(context)),
                 'speed': float(
                     LaunchConfiguration('cruise_speed').perform(context)),
+                # datum в первую точку маршрута; false — при тестах вдали
+                # от маршрута (ноль map по первому фиксу, без телепорта TF)
+                'set_datum_from_first_waypoint':
+                    LaunchConfiguration('datum_at_first_waypoint')
+                    .perform(context).lower()
+                    not in ('false', '0', 'no'),
             },
         ],
     )
@@ -212,6 +218,10 @@ def generate_launch_description():
                               description='Число дополнительных кругов'),
         DeclareLaunchArgument('cruise_speed', default_value='0.6',
                               description='Крейсерская скорость, м/с'),
+        DeclareLaunchArgument('datum_at_first_waypoint', default_value='true',
+                              description='false: ноль map по первому '
+                                          'GPS-фиксу (тесты вдали от '
+                                          'маршрута)'),
         DeclareLaunchArgument('declination_deg', default_value='0.0',
                               description='Магнитное склонение, град '
                                           '(0 — если учтено в STM32)'),

@@ -112,11 +112,35 @@ python3 -c "from robot_localization.srv import SetDatum; r=SetDatum.Request(); p
 PYTHONPATH (часто `~/.local/...` или старый `install/` в underlay),
 затем `ros2 daemon stop` и перезапуск стека.
 
-Если ОБЕ проверки чистые (как на robot-2024-09), причина была в устаревшем
-окружении сессии, из которой стартовал стек: launch-процессы наследуют
-PYTHONPATH на момент запуска. Лечение: открыть новый терминал
-(`source ~/ros2_ws/install/setup.bash`), убедиться, что в `~/.bashrc` нет
-источников старых workspace, `ros2 daemon stop` — и запустить стек заново.
+Если ОБЕ проверки чистые, а abort всё равно повторяется (в т.ч. в
+`ros2 service call` из свежего терминала) — конвертация Python→C сломана
+на уровне установки ROS: типичная причина — смешанные версии apt-пакетов
+после частичного обновления. Лечение:
+
+```bash
+sudo apt update
+sudo apt install --only-upgrade ros-jazzy-geographic-msgs ros-jazzy-rosidl*
+# или полнее: sudo apt full-upgrade
+```
+
+Пока конвертер не чинен, миссии это не мешает: gps_mission вызывает
+SetDatum подпроцессом и следит за результатом (в логе — «datum
+установлен» либо предупреждение и datum по первому фиксу).
+
+### Datum и «прыжок» TF при его установке
+
+Учтите: установка datum (и смена её опоры) мгновенно сдвигает TF
+`map→odom` на разницу между старой и новой привязкой. Если робот стоит
+далеко от waypoints[0], в момент вызова datum костмапа на несколько
+сканов теряет лидар — то самое предупреждение «Sensor origin ... out of
+map bounds» (~0.4 с после строки про datum в логе). Для тестов ВДАЛИ от
+маршрута запускайте с `datum_at_first_waypoint:=false` — ноль `map`
+встанет по первому GPS-фиксу (у робота), никаких телепортов и километровых
+координат:
+
+```bash
+ros2 launch gps_navigator route.launch.py datum_at_first_waypoint:=false
+```
 
 ## Известная проблема: «Sensor origin ... is out of map bounds ... cannot raytrace»
 
