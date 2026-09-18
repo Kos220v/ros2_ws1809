@@ -8,7 +8,6 @@
   <license>Apache License 2.0</license>
 
   <exec_depend>rclpy</exec_depend>
-  <exec_depend>rclpy_action</exec_depend>
   <exec_depend>nav2_msgs</exec_depend>
   <exec_depend>nav2_waypoint_follower</exec_depend>
   <exec_depend>geographic_msgs</exec_depend>

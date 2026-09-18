@@ -1,0 +1,2 @@
+[console_scripts]
+preflight_check = gps_navigator.preflight_check:main

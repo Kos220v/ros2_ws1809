@@ -20,9 +20,11 @@
   <exec_depend>tracked_robot_description</exec_depend>
   <exec_depend>ydlidar_ros2_driver</exec_depend>
   <exec_depend>nmea_navsat_driver</exec_depend>
-  <!-- навигационный слой (GPS-маршрут): gps_navigator/launch/route.launch.py -->
-  <exec_depend>gps_navigator</exec_depend>
-  <exec_depend>gps_mission</exec_depend>
+  <!-- ВАЖНО: зависимостей от gps_navigator/gps_mission здесь НЕТ — иначе
+       цикл (gps_navigator зависит от project_start: route.launch.py включает
+       start.launch.py). Навигационный слой собирается и запускается отдельно:
+       ros2 launch gps_navigator route.launch.py -->
+
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
