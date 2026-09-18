@@ -39,9 +39,10 @@ from geographic_msgs.msg import GeoPoseStamped
 from nav2_msgs.action import FollowGPSWaypoints
 from robot_localization.srv import SetDatum
 from sensor_msgs.msg import NavSatFix
-from std_msgs.msg import String
+from std_msgs.msg import Int8, String
 from std_srvs.srv import Trigger
 
+from .mode_logic import edge_action, is_auto_mode
 from .waypoints_io import (
     append_waypoint,
     fill_local_coords,
@@ -88,9 +89,14 @@ class GpsMission(Node):
         self.current_waypoint = -1
         self.total_waypoints = 0
         self._last_status_t = 0.0
+        self.start_on_auto = bool(g("start_on_auto").value)
+        self._auto_prev = None      # None = положение тумблера ещё неизвестно
+        self._resume_index = None   # точка продолжения после отмены тумблером
 
         self.create_subscription(NavSatFix, str(g("gps_topic").value),
                                  self._on_fix, 10)
+        self.create_subscription(Int8, str(g("control_mode_topic").value),
+                                 self._on_mode, 10)
         self.pub_status = self.create_publisher(
             String, str(g("status_topic").value), 10)
 
@@ -227,10 +233,50 @@ class GpsMission(Node):
             return
         self.last_fix = (msg.latitude, msg.longitude)
 
+    def _on_mode(self, msg):
+        """Тумблер режима пульта (/control_mode, std_msgs/Int8).
+
+        При start_on_auto=true: перевод в положение 2 (AUTO) запускает
+        маршрут (или продолжает с прерванной точки), уход из AUTO отменяет
+        миссию. Первое сообщение только фиксирует положение тумблера.
+        Внимание: первый старт ждёт action-сервер до action_wait_timeout
+        сек — как и сервис ~/start.
+        """
+        if not self.start_on_auto:
+            return
+        now_auto = is_auto_mode(msg.data)
+        prev = self._auto_prev
+        self._auto_prev = now_auto
+        if prev is None:
+            return
+        action = edge_action(prev, now_auto, self.state,
+                             self._resume_index is not None)
+        if action == "cancel":
+            self._cancel_active("тумблер ушёл из AUTO")
+        elif action in ("start", "resume"):
+            ok, text = self._start_mission(
+                start_from=self._resume_index if action == "resume" else None)
+            log = self.get_logger().info if ok else self.get_logger().error
+            log(("Тумблер AUTO: " if ok else
+                 "Тумблер AUTO, маршрут не запущен: ") + text)
+
+    def _cancel_active(self, reason):
+        """Отменить активную миссию, если есть. Запоминает точку
+        продолжения. Возвращает True, если миссия была активна."""
+        if self.goal_handle is not None and not self.goal_handle.done():
+            if self.current_waypoint >= 0:
+                self._resume_index = self.current_waypoint
+            self.goal_handle.cancel_goal_async()
+            self.state = "CANCELLED"
+            self.get_logger().warning(f"Миссия отменена: {reason}")
+            return True
+        return False
+
     def _goal_response(self, future):
         handle = future.result()
         if not handle.accepted:
             self.state = "REJECTED"
+            self._resume_index = None
             self.get_logger().error("Nav2 отклонил goal маршрута")
             return
         self.goal_handle = handle
