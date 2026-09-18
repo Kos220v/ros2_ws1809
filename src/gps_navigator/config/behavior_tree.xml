@@ -1,0 +1,33 @@
+<!--
+  Дерево поведения Nav2 для уличного GPS-маршрута.
+
+  Отличия от штатного navigate_through_poses_w_replanning_and_recovery.xml:
+    * НЕТ RecoveryNode со Spin — гусеничная машина на грунте при вращении
+      на месте роет ямы и может закопаться. Вместо этого:
+    * при неудаче планирования — Wait (осмотреться/дать людям уйти) и
+      BackUp (отъехать, проверка столкновений по костмапу);
+    * перепланирование раз в 3 с (RateController) — достаточно для
+      скорости до 0.8 м/с и экономит CPU.
+-->
+<root BTCPP_format="4" main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="6" name="NavigateThroughPosesRecovery">
+      <PipelineSequence name="NavigateWithReplanning">
+        <RateController hz="0.333">
+          <RecoveryNode number_of_retries="1" name="ComputePathThroughPoses">
+            <ComputePathThroughPoses path="{path}" target_path="{through_poses}" goal_checker_id="general_goal_checker"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-context" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+        <RecoveryNode number_of_retries="1" name="FollowPath">
+          <FollowPath path="{path}" controller_id="FollowPath" goal_checker_id="general_goal_checker"/>
+          <ClearEntireCostmap name="ClearLocalCostmap-context" service_name="local_costmap/clear_entirely_local_costmap"/>
+        </RecoveryNode>
+      </PipelineSequence>
+      <Sequence name="RecoveryActions">
+        <Wait wait_duration="5.0"/>
+        <BackUp backup_dist="0.30" backup_speed="0.15"/>
+      </Sequence>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

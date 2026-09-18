@@ -1,0 +1,163 @@
+# ============================================================================
+# Локализация для уличного GPS-маршрута: ДВА фильтра EKF + navsat_transform
+# (robot_localization). Стандартная схема dual-EKF.
+#
+#   ekf_odom  (world_frame: odom)  -> TF odom -> base_link
+#   ekf_map   (world_frame: map)   -> TF map  -> odom
+#   navsat_transform: /gps/fix -> /odometry/gps (UTM/локальные метры)
+#                     + сервисы /fromLL, /toLL, /datum
+#
+# ПРИНЦИПИАЛЬНО (по ТЗ):
+#   * ЛИНЕЙНАЯ скорость берётся ТОЛЬКО из kolesa_control: /odom/vesc,
+#     поле twist.twist.linear.x. В odom0_config включён ТОЛЬКО vx
+#     (строка скоростей: true, false, false), vy и wz — false, углы из
+#     колёс — false. Разность бортов НЕ используется: гусеницы буксуют.
+#   * КУРС берётся ТОЛЬКО из IMU, из ГОТОВОГО КВАТЕРНИОНА /imu/data:
+#     в imu0_config включена только строка ориентации (roll/pitch/yaw =
+#     true), скорости и ускорения — выключены (нет двойного учёта и
+#     интеграции гироскопа).
+# ============================================================================
+
+ekf_odom:
+  ros__parameters:
+    frequency: 20.0            # Гц: телеметрия VESC 20 Гц, IMU 25-50 Гц.
+                               # Выше не нужно — бережём CPU Raspberry Pi 5.
+    sensor_timeout: 0.2
+    two_d_mode: true           # плоский режим: z/roll/pitch обнуляются
+    transform_time_offset: 0.0
+    transform_timeout: 0.2
+    print_diagnostics: true
+    debug: false
+
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: odom          # ЭТОТ фильтр публикует odom -> base_link
+    publish_tf: true
+
+    # --- kolesa_control: ТОЛЬКО линейная скорость vx --------------------
+    odom0: /odom/vesc
+    odom0_config: [false, false, false,      # x, y, z          — не берём
+                   false, false, false,      # roll, pitch, yaw — не берём
+                   true,  false, false,      # vx (!), vy, vz   — только vx
+                   false, false, false,      # vroll, vpitch, VYAW — НЕ берём
+                   false, false, false]      # ускорения        — не берём
+    odom0_differential: false
+    odom0_relative: false
+    odom0_queue_size: 3
+    odom0_twist_rejection_threshold: 1.5     # отсечка выбросов тахометра, м/с
+
+    # --- IMU: ТОЛЬКО ориентация из готового кватерниона -----------------
+    imu0: /imu/data
+    imu0_config: [false, false, false,       # x, y, z
+                  true,  true,  true,        # roll, pitch, YAW — из кватерниона
+                  false, false, false,       # угловые скорости — выкл
+                  false, false, false,       # ускорения — выкл
+                  false, false, false]       # (15 значений, как требует robot_localization)
+    imu0_differential: false
+    imu0_relative: false
+    imu0_queue_size: 3
+    imu0_remove_gravitational_acceleration: true
+    # Поправка угла установки платы IMU, рад. ТО ЖЕ значение, что
+    # imu_yaw_offset_deg в start.launch.py (-48° = -0.8378).
+    # Калибровка: «нос» робота на восток -> yaw в odom должен быть ~0.
+    imu0_yaw_offset: -0.8378
+    imu0_ned_to_enu: false     # STM32 уже отдаёт кватернион в ENU
+
+    use_control: false
+    # Шум процесса: для гусеничной платформы увеличены шумы по yaw и
+    # скоростям (проскальзывание в повороте).
+    process_noise_covariance: [0.05, 0.05, 0.06,
+                               0.03, 0.03, 0.08,
+                               0.20, 0.20, 0.20,
+                               0.10, 0.10, 0.20,
+                               0.10, 0.10, 0.10]
+    initial_estimate_covariance: [1e-9, 1e-9, 1e-9,
+                                  1e-9, 1e-9, 1e-9,
+                                  1e-9, 1e-9, 1e-9,
+                                  1e-9, 1e-9, 1e-9,
+                                  1e-9, 1e-9, 1e-9]
+
+ekf_map:
+  ros__parameters:
+    frequency: 10.0            # GPS даёт 1-10 Гц — чаще не нужно
+    sensor_timeout: 0.2
+    two_d_mode: true
+    transform_time_offset: 0.0
+    transform_timeout: 0.2
+    print_diagnostics: true
+    debug: false
+
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: map           # ЭТОТ фильтр публикует map -> odom
+    publish_tf: true
+
+    # Те же источники, что и в ekf_odom: vx от колёс + ориентация IMU.
+    odom0: /odom/vesc
+    odom0_config: [false, false, false,
+                   false, false, false,
+                   true,  false, false,      # только vx
+                   false, false, false,      # vyaw — НЕ берём
+                   false, false, false]
+    odom0_differential: false
+    odom0_relative: false
+    odom0_queue_size: 3
+    odom0_twist_rejection_threshold: 1.5
+
+    # GPS в метрах от navsat_transform: только x, y.
+    odom1: /odometry/gps
+    odom1_config: [true,  true,  false,      # x, y — из GPS
+                   false, false, false,      # ориентация из GPS — НЕ берём
+                   false, false, false,
+                   false, false, false,
+                   false, false, false]
+    odom1_differential: false
+    odom1_relative: false
+    odom1_queue_size: 3
+
+    imu0: /imu/data
+    imu0_config: [false, false, false,
+                  true,  true,  true,        # ориентация из кватерниона
+                  false, false, false,
+                  false, false, false,
+                  false, false, false]
+    imu0_differential: false
+    imu0_relative: false
+    imu0_queue_size: 3
+    imu0_remove_gravitational_acceleration: true
+    imu0_yaw_offset: -0.8378   # ДЕРЖАТЬ ТАКИМ ЖЕ, как в ekf_odom
+    imu0_ned_to_enu: false
+
+    use_control: false
+    process_noise_covariance: [0.50, 0.50, 0.06,
+                               0.03, 0.03, 0.08,
+                               0.20, 0.20, 0.20,
+                               0.10, 0.10, 0.20,
+                               0.10, 0.10, 0.10]
+    initial_estimate_covariance: [1.0, 1.0, 1e-9,
+                                  1e-9, 1e-9, 1e-9,
+                                  1e-9, 1e-9, 1e-9,
+                                  1e-9, 1e-9, 1e-9,
+                                  1e-9, 1e-9, 1e-9]
+
+navsat_transform:
+  ros__parameters:
+    frequency: 10.0
+    delay: 3.0                 # ждём первые кадры IMU/одометрии, с
+    # Магнитное склонение, рад (+ восточное). Задаётся из launch
+    # (declination_deg). Если STM32 уже учёл склонение при фьюжне
+    # (SET_DECLINATION/SAVE_FLASH), оставьте 0.0 — иначе поправка
+    # применится дважды.
+    magnetic_declination_radians: 0.0
+    # Угол между «нулем» азимута IMU и востоком (ENU). Подбирается при
+    # предполётной подготовке: см. docs/PREFLIGHT.md, шаг «курс».
+    yaw_offset: 0.0
+    zero_altitude: true
+    broadcast_cartesian_transform: false      # map->odom публикует ekf_map
+    broadcast_cartesian_transform_as_parent_frame: false
+    publish_filtered_gps: false
+    use_odometry_yaw: false                   # курс — из /imu/data
+    wait_for_datum: false                     # datum ставит gps_mission
+    transform_timeout: 0.5

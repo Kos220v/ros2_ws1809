@@ -19,11 +19,19 @@ ROS 2 Jazzy).
     imu_stm32_bridge     STM32 IMU        -> /imu/data (кватернион ENU, гироскоп)
     robot_odom           /odom/vesc + /imu/data -> /odom
                          (путь — VESC, курс — IMU; колёсный yaw НЕ используется)
+                         ЭТАЛОННАЯ одометрия для сверки. В режиме маршрута
+                         (route.launch.py) TF и локализацию считает
+                         robot_localization (2×EKF + navsat_transform),
+                         поэтому odom_publish_tf здесь всегда false.
     nmea_navsat_driver   GNSS             -> /gps/fix
     robot_state_publisher  URDF           -> статические TF base_link -> датчики
     cmd_switcher         приоритеты       -> /cmd_vel
     relay_reliable       /scan -> /scan_reliable
     ydlidar              лидар (USB)      -> /scan (с задержкой lidar_delay)
+
+Для движения по GPS-маршруту этот файл запускается НЕ напрямую, а через
+    ros2 launch gps_navigator route.launch.py
+(он добавляет robot_localization + Nav2 + gps_mission).
 
 Аргументы:
     lidar_delay   задержка старта лидара, с (мотор вибрирует, IMU должна
@@ -197,6 +205,8 @@ def launch_setup(context, *args, **kwargs):
 
     # ---------------------------------------------- одометрия VESC + IMU -> /odom
     odom_params = os.path.join(odom_share, 'config', 'odom_params.yaml')
+    use_robot_odom = LaunchConfiguration('use_robot_odom').perform(context) \
+        .lower() in ('1', 'true', 'yes')
     odom_node = Node(
         package='robot_odom',
         executable='odom_node',
@@ -278,7 +288,7 @@ def launch_setup(context, *args, **kwargs):
         elrs_node,
         imu_node,
         kolesa_control_node,
-        odom_node,
+        *([odom_node] if use_robot_odom else []),
         *gps_nodes,
         robot_state_publisher_node,
         cmd_mux_node,
@@ -309,5 +319,8 @@ def generate_launch_description():
                                           '(true только БЕЗ robot_localization)'),
         DeclareLaunchArgument('odom_yaw_mode', default_value='absolute',
                               description='absolute (ENU) | relative (ноль при старте)'),
+        DeclareLaunchArgument('use_robot_odom', default_value='true',
+                              description='запускать robot_odom (эталон /odom '
+                                          'для сверки и режима без Nav2)'),
         OpaqueFunction(function=launch_setup),
     ])

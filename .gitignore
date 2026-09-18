@@ -1,0 +1,7 @@
+# артефакты сборки и кэши (в git не храним)
+__pycache__/
+*.py[cod]
+.pytest_cache/
+build/
+install/
+log/

@@ -1,0 +1,248 @@
+# ============================================================================
+# Параметры Nav2 для УЛИЧНОГО маршрута по GPS.
+# Оптимизировано под Raspberry Pi 5: низкие частоты, маленькие костмапы,
+# минимум серверов (нет smoother_server, velocity_smoother, collision_monitor,
+# map_server/amcl — карты нет, «картой» служит окно костмапа по лидару).
+#
+# Обязательные условия из ТЗ:
+#   * TF map->odom и odom->base_link публикует robot_localization (два EKF),
+#     а НЕ Nav2 и НЕ robot_odom (см. ekf_localization.yaml);
+#   * линейная скорость в EKF — только из /odom/vesc (kolesa_control);
+#   * курс — только из кватерниона /imu/data;
+#   * /cmd_vel_nav уходит в cmd_switcher на /cmd_vel/auto, поэтому пульт
+#     ELRS всегда приоритетнее автопилота.
+# ============================================================================
+
+bt_navigator:
+  ros__parameters:
+    global_frame: map
+    robot_base_frame: base_link
+    odom_topic: /odometry/filtered        # выход ekf_odom
+    bt_loop_duration: 10                  # мс (100 Гц — компромисс/CPU)
+    default_server_timeout: 20
+    wait_for_service_timeout: 1000
+    action_server_result_timeout: 900.0
+    navigators: ["navigate_to_pose", "navigate_through_poses"]
+    navigate_to_pose:
+      plugin: "nav2_bt_navigator::NavigateToPoseNavigator"
+    navigate_through_poses:
+      plugin: "nav2_bt_navigator::NavigateThroughPosesNavigator"
+    # Дерево задаётся из navigation.launch.py (config/behavior_tree.xml)
+    error_code_names:
+      - compute_path_error_code
+      - follow_path_error_code
+
+controller_server:
+  ros__parameters:
+    controller_frequency: 10.0        # Гц. Больше на Pi 5 не нужно.
+    costmap_update_timeout: 0.4
+    min_x_velocity_threshold: 0.02
+    min_y_velocity_threshold: 0.5
+    min_theta_velocity_threshold: 0.05
+    failure_tolerance: 0.5            # сек без прогресса до ошибки контроллера
+    progress_checker_plugins: ["progress_checker"]
+    goal_checker_plugins: ["general_goal_checker"]
+    controller_plugins: ["FollowPath"]
+    use_realtime_priority: false
+
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.25   # м за movement_time_allowance
+      movement_time_allowance: 20.0    # на улице объезд медленный — запас
+
+    # GPS-точность 2-5 м: цель «достигнута» в радиусе 2 м, курс не важен
+    # (в FollowGPSWaypoints ориентация цели нулевая).
+    general_goal_checker:
+      stateful: True
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 2.0
+      yaw_goal_tolerance: 6.28318
+
+    FollowPath:
+      plugin: "dwb_core::DWBLocalPlanner"
+      debug_trajectory_details: False
+      # --- генератор траекторий: меньше сэмплов = меньше CPU -------------
+      min_vel_x: 0.0
+      max_vel_x: 0.8                  # м/с; kolesa_control режет до 1.0
+      min_vel_y: 0.0
+      max_vel_y: 0.0
+      max_vel_theta: 0.8              # рад/с
+      min_speed_xy: 0.0
+      max_speed_xy: 0.8
+      min_speed_theta: 0.0
+      acc_lim_x: 1.0                  # м/с^2 (открытый duty-контур, мягко)
+      acc_lim_y: 0.0
+      acc_lim_theta: 1.5              # рад/с^2
+      decel_lim_x: -1.5
+      decel_lim_y: 0.0
+      decel_lim_theta: -2.0
+      vx_samples: 8
+      vy_samples: 1
+      vtheta_samples: 10
+      sim_time: 1.5
+      linear_granularity: 0.1
+      angular_granularity: 0.05
+      transform_tolerance: 0.3        # GPS/EKF: допуск на возраст TF
+      xy_goal_tolerance: 2.0
+      trans_stopped_velocity: 0.15
+      short_circuit_trajectory_evaluation: True
+      limit_vel_cmd_in_traj: False
+      stateful: True
+      # --- критики --------------------------------------------------------
+      critics: ["RotateToGoal", "Oscillation", "BaseObstacle",
+                "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
+      RotateToGoal:
+        scale: 1.0
+      BaseObstacle:
+        scale: 0.02
+      PathAlign:
+        scale: 14.0
+        forward_point_distance: 0.1
+      GoalAlign:
+        scale: 24.0
+        forward_point_distance: 0.1
+      PathDist:
+        scale: 32.0
+      GoalDist:
+        scale: 24.0
+      Oscillation:
+        oscillation_reset_dist: 0.25
+        oscillation_reset_angle: 0.2
+        oscillation_reset_time: -1.0
+
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 1.0   # Гц — перепланирование раз в секунду
+    planner_plugins: ["GridBased"]
+    costmap_update_timeout: 1.0
+    GridBased:
+      plugin: "nav2_navfn_planner::NavfnPlanner"
+      tolerance: 1.5                  # м: можно не дотягиваться до точки
+      use_astar: true
+      allow_unknown: true             # улица: неизвестное = можно ехать
+
+behavior_server:
+  ros__parameters:
+    local_costmap_topic: local_costmap/costmap_raw
+    global_costmap_topic: global_costmap/costmap_raw
+    local_footprint_topic: local_costmap/published_footprint
+    global_footprint_topic: global_costmap/published_footprint
+    cycle_frequency: 10.0
+    # Spin НЕ включён: гусеницы на грунте при вращении роют ямы.
+    behavior_plugins: ["backup", "wait"]
+    backup:
+      plugin: "nav2_behaviors::BackUp"
+    wait:
+      plugin: "nav2_behaviors::Wait"
+    local_frame: odom
+    global_frame: map
+    robot_base_frame: base_link
+    transform_tolerance: 0.3
+    simulate_ahead_time: 2.0
+    max_rotational_vel: 0.8
+    min_rotational_vel: 0.3
+    rotational_acc_lim: 1.5
+
+waypoint_follower:
+  ros__parameters:
+    loop_rate: 10                     # Гц цикла следования по точкам
+    stop_on_failure: false            # точку не взяли (шум GPS) -> следующая
+    action_server_result_timeout: 900.0
+    waypoint_task_executor_plugin: "wait_at_waypoint"
+    wait_at_waypoint:
+      plugin: "nav2_waypoint_follower::WaitAtWaypoint"
+      enabled: True
+      waypoint_pause_duration: 0      # мс: без пауз между точками
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      update_frequency: 3.0           # Гц
+      publish_frequency: 1.0
+      global_frame: odom
+      robot_base_frame: base_link
+      rolling_window: true
+      width: 10                       # м: 10×10 при 0.1 м = 10 000 ячеек
+      height: 10
+      resolution: 0.1
+      robot_radius: 0.55              # м: полуширина робота + запас
+      plugins: ["voxel_layer", "inflation_layer"]
+      voxel_layer:
+        plugin: "nav2_costmap_2d::VoxelLayer"
+        enabled: True
+        publish_voxel_map: False      # не публикуем 3D-вокселы — экономия
+        origin_z: 0.0
+        z_resolution: 0.1
+        z_voxels: 10
+        max_obstacle_height: 2.0
+        mark_threshold: 0
+        observation_sources: scan
+        scan:
+          topic: /scan                # BEST_EFFORT драйвера, без репликации
+          data_type: "LaserScan"
+          marking: True
+          clearing: True
+          obstacle_min_range: 0.3     # м: ближе 30 см лидар не видит
+          obstacle_max_range: 8.0
+          min_obstacle_height: 0.05
+          max_obstacle_height: 2.0
+          raytrace_min_range: 0.3
+          # inf_is_valid: true в ydlidar_params.yaml делает «пустые» лучи
+          # +inf, и они честно очищают костмап на всю дальность.
+          raytrace_max_range: 10.0
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        enabled: True
+        inflation_radius: 1.0
+        cost_scaling_factor: 2.5
+      always_send_full_costmap: False
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      update_frequency: 1.0           # Гц
+      publish_frequency: 0.5
+      global_frame: map
+      robot_base_frame: base_link
+      rolling_window: true            # карты нет — окно вокруг робота
+      width: 24
+      height: 24
+      resolution: 0.1
+      robot_radius: 0.55
+      track_unknown_space: false
+      plugins: ["obstacle_layer", "inflation_layer"]
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        observation_sources: scan
+        scan:
+          topic: /scan
+          data_type: "LaserScan"
+          marking: True
+          clearing: True
+          obstacle_min_range: 0.3
+          obstacle_max_range: 8.0
+          min_obstacle_height: 0.05
+          max_obstacle_height: 2.0
+          raytrace_min_range: 0.3
+          raytrace_max_range: 10.0
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        enabled: True
+        inflation_radius: 1.0
+        cost_scaling_factor: 2.5
+      always_send_full_costmap: False
+
+# Жизненный цикл Nav2-серверов поднимает lifecycle_manager из
+# navigation.launch.py.
+lifecycle_manager_navigation:
+  ros__parameters:
+    autostart: true
+    node_names:
+      - controller_server
+      - planner_server
+      - behavior_server
+      - bt_navigator
+      - waypoint_follower
+    bond_timeout: 20.0
+    attempt_respawn_reconnection: true

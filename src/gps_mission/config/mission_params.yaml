@@ -1,0 +1,21 @@
+gps_mission:
+  ros__parameters:
+    # Путь к маршруту (задаётся из launch; ~ раскрывается в домашний каталог)
+    waypoints_file: ""
+    # Сколько ДОПОЛНИТЕЛЬНЫХ кругов проехать: 0 = один проход
+    number_of_loops: 0
+    # С какой точки маршрута начать (0 = первая)
+    start_index: 0
+    # Крейсерская скорость для информации (реальные лимиты — в
+    # nav2_params.yaml: max_vel_x / max_speed_xy)
+    speed: 0.6
+    # Куда ~/record_waypoint дописывает точки
+    record_file: "~/gps_route.yaml"
+    # Поставить ноль системы map в первую точку маршрута (рекомендуется:
+    # координаты в RViz будут около нуля)
+    set_datum_from_first_waypoint: true
+    datum_service: "/datum"
+    action_name: "follow_gps_waypoints"
+    action_wait_timeout: 30.0
+    status_topic: "/gps_mission/status"
+    gps_topic: "/gps/fix"

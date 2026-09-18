@@ -20,6 +20,9 @@
   <exec_depend>tracked_robot_description</exec_depend>
   <exec_depend>ydlidar_ros2_driver</exec_depend>
   <exec_depend>nmea_navsat_driver</exec_depend>
+  <!-- навигационный слой (GPS-маршрут): gps_navigator/launch/route.launch.py -->
+  <exec_depend>gps_navigator</exec_depend>
+  <exec_depend>gps_mission</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

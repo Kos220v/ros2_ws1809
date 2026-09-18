@@ -1,0 +1,30 @@
+robot_odom:
+  ros__parameters:
+    # Входы
+    vesc_odom_topic: /odom/vesc     # kolesa_control: ТОЛЬКО twist.linear.x
+    imu_topic: /imu/data            # imu_stm32_bridge: курс из кватерниона
+
+    # Выход
+    odom_topic: /odom
+    odom_frame: odom
+    base_frame: base_link
+
+    # TF odom->base_link: true ТОЛЬКО если НЕ запущены robot_localization
+    # или slam_toolbox (иначе два узла издают один TF — конфликт).
+    publish_tf: false
+
+    # absolute — курс в ENU (0 = восток, +90° = север), нужен для GPS-маршрута.
+    # relative — yaw = 0 при старте узла (стенд, помещение).
+    yaw_mode: absolute
+
+    # Поправка угла монтажа IMU, градусы: yaw = yaw_кватерниона + offset.
+    # Калибровка: поверните робота «носом» точно на восток и подберите
+    # значение так, чтобы `ros2 topic echo /odom --field pose.pose.orientation`
+    # давал yaw = 0. Значение по умолчанию — из start.launch.py.
+    yaw_offset_deg: -48.0
+
+    # Защита
+    max_dt: 0.25          # с — ограничение шага интегрирования
+    vesc_timeout: 0.5     # с — /odom/vesc считается устаревшим
+    imu_timeout: 0.5      # с — /imu/data считается устаревшим
+    publish_rate_watchdog: 2.0   # Гц проверки устаревания (дёшево по CPU)
