@@ -112,6 +112,12 @@ python3 -c "from robot_localization.srv import SetDatum; r=SetDatum.Request(); p
 PYTHONPATH (часто `~/.local/...` или старый `install/` в underlay),
 затем `ros2 daemon stop` и перезапуск стека.
 
+Если ОБЕ проверки чистые (как на robot-2024-09), причина была в устаревшем
+окружении сессии, из которой стартовал стек: launch-процессы наследуют
+PYTHONPATH на момент запуска. Лечение: открыть новый терминал
+(`source ~/ros2_ws/install/setup.bash`), убедиться, что в `~/.bashrc` нет
+источников старых workspace, `ros2 daemon stop` — и запустить стек заново.
+
 ## Состав запуска
 
 | Слой | Файл | Что поднимает |
