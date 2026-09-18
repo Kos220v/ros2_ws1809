@@ -82,6 +82,20 @@ yaw растёт на малой скорости). `ekf_map` берёт его 
 между фиксами), сброс окна при откате времени (NTP), отсутствие публикации
 на стоянке и при плохом статусе фикса.
 
+## Перед заездом: убедиться, что сборка свежая
+
+Три выстрела себе в ногу из одной пушки: код обновлён в git, но на роботе
+запущена старая сборка. Проверка перед каждым заездом:
+
+```bash
+cd ~/ros2_ws
+git log --oneline -1                       # ждём последний коммит из репозитория
+colcon build --packages-select gps_mission gps_navigator
+source install/setup.bash
+# установленная копия содержит последний фикс? (>0 — да)
+grep -c probe_geo_serialization install/gps_mission/lib/python3.12/site-packages/gps_mission/gps_mission_node.py
+```
+
 ## Известная проблема: abort «geo_pose convert_from_py Assertion failed»
 
 Симптом: при старте маршрута процесс `gps_mission_node` падает с
