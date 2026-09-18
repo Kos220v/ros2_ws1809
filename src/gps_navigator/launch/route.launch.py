@@ -17,7 +17,11 @@ route.launch.py — ПОЛНЫЙ запуск робота для движени
     ros2 launch gps_navigator route.launch.py waypoints_file:=/home/pi/route.yaml loops:=1
 
 Старт миссии (после предполётной проверки!):
-    ros2 service call /gps_mission/start std_srvs/srv/Trigger
+    тумблер в положение 2 (AUTO) — gps_mission запустит маршрут сам
+    (start_on_auto: true в gps_mission/config/mission_params.yaml);
+    или: ros2 service call /gps_mission/start std_srvs/srv/Trigger
+    Тумблер в положение 1 (MANUAL) отменяет миссию; возврат в положение 2
+    продолжает маршрут с прерванной точки.
 
 Аргументы (основные):
     waypoints_file    маршрут waypoints.yaml (умолч. — из project_start)

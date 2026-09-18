@@ -18,8 +18,14 @@ FollowGPSWaypoints). Сам waypoints_follower через сервис `/fromLL`
     ~/stop             — отменить goal;
     ~/record_waypoint  — дописать текущую GPS-точку в файл маршрута.
 
+Тумблер пульта (elrs_receiver -> /control_mode, положение 2 = AUTO):
+при start_on_auto=true перевод тумблера в AUTO сам запускает маршрут
+(или продолжает его с точки, на которой прервались), уход из AUTO —
+отменяет миссию. При start_on_auto=false старт только сервисом ~/start.
+
 Топики:
     /gps/fix               (подписка, для записи точек)
+    /control_mode          (подписка, тумблер режима пульта)
     /gps_mission/status    (публикация состояния, ~2 Гц)
 """
 
@@ -60,6 +66,12 @@ class GpsMission(Node):
         p("action_wait_timeout", 30.0)
         p("status_topic", "/gps_mission/status")
         p("gps_topic", "/gps/fix")
+        # Тумблер пульта (elrs_receiver): 0=AUTO(пол.2), 1=MANUAL(пол.1),
+        # 2=AVOID, 3=RETURN_HOME(пол.3)
+        p("control_mode_topic", "/control_mode")
+        # true — тумблер в положение 2 сам стартует/продолжает маршрут,
+        # уход из AUTO отменяет миссию
+        p("start_on_auto", False)
 
         g = self.get_parameter
         self.waypoints_file = self._expand(str(g("waypoints_file").value))
@@ -93,31 +105,46 @@ class GpsMission(Node):
 
         self.create_timer(0.5, self._publish_status)
 
+        if self.start_on_auto:
+            start_hint = ("тумблер в положение 2 (AUTO) — маршрут "
+                          "стартует сам; ~/stop — отмена")
+        else:
+            start_hint = ("ros2 service call /gps_mission/start "
+                          "std_srvs/srv/Trigger")
         self.get_logger().info(
             "gps_mission готов. Маршрут: "
-            f"{self.waypoints_file or '(не задан)'}; запуск: "
-            "ros2 service call /gps_mission/start std_srvs/srv/Trigger")
+            f"{self.waypoints_file or '(не задан)'}; запуск: {start_hint}")
 
     # ============================================================== сервисы
     def _srv_start(self, request, response):
+        response.success, response.message = self._start_mission()
+        if not response.success:
+            self.get_logger().error(response.message)
+        return response
+
+    def _start_mission(self, start_from=None):
+        """Загрузить маршрут и отправить goal. Возвращает (ok, сообщение).
+
+        start_from — индекс точки, с которой продолжать (None — брать
+        self.start_index). Используется для продолжения миссии, прерванной
+        тумблером.
+        """
         if self.goal_handle is not None and not self.goal_handle.done():
-            response.success = False
-            response.message = "Миссия уже выполняется"
-            return response
+            return False, "Миссия уже выполняется"
 
         try:
             wps = load_waypoints(self.waypoints_file)
         except ValueError as e:
-            response.success = False
-            response.message = str(e)
-            self.get_logger().error(response.message)
-            return response
+            return False, str(e)
 
-        if self.start_index >= len(wps):
-            response.success = False
-            response.message = (f"start_index={self.start_index} вне маршрута "
-                                f"({len(wps)} точек)")
-            return response
+        first = self.start_index if start_from is None else int(start_from)
+        if first >= len(wps):
+            if start_from is None:
+                return False, (f"start_index={self.start_index} вне маршрута "
+                               f"({len(wps)} точек)")
+            # сохранённая точка продолжения устарела (маршрут перезаписали) —
+            # продолжаем с параметра start_index
+            first = min(self.start_index, len(wps) - 1)
 
         # Ноль системы `map` — в первой точке маршрута: координаты в RViz
         # будут около (0; 0), проще понимать, где робот.
@@ -141,16 +168,13 @@ class GpsMission(Node):
 
         if not self.client.wait_for_server(
                 timeout_sec=self.action_wait_timeout):
-            response.success = False
-            response.message = (
+            return False, (
                 "Action-сервер follow_gps_waypoints не отвечает — запущен ли "
                 "nav2_waypoint_follower (navigation.launch.py)?")
-            self.get_logger().error(response.message)
-            return response
 
         goal = FollowGPSWaypoints.Goal()
         goal.number_of_loops = self.number_of_loops
-        goal.goal_index = self.start_index
+        goal.goal_index = first
         for wp in wps:
             gp = GeoPoseStamped()
             gp.header.frame_id = "WGS84"
@@ -166,27 +190,22 @@ class GpsMission(Node):
 
         self.total_waypoints = len(wps)
         self.state = "SENDING"
+        self._resume_index = None
         send_future = self.client.send_goal_async(
             goal, feedback_callback=self._feedback)
         send_future.add_done_callback(self._goal_response)
 
-        response.success = True
-        response.message = (f"Маршрут отправлен в Nav2: {len(wps)} точек, "
-                            f"~{route_length(wps):.0f} м, "
-                            f"loops={self.number_of_loops}")
-        self.get_logger().info(response.message)
-        return response
+        return True, (f"Маршрут отправлен в Nav2: {len(wps)} точек, "
+                      f"~{route_length(wps):.0f} м, "
+                      f"loops={self.number_of_loops}, старт с точки {first}")
 
     def _srv_stop(self, request, response):
-        if self.goal_handle is not None and not self.goal_handle.done():
-            self.goal_handle.cancel_goal_async()
-            self.state = "CANCELLED"
-            response.success = True
-            response.message = "Отмена миссии отправлена"
-        else:
-            self.state = "IDLE"
-            response.success = True
-            response.message = "Активной миссии нет"
+        was_active = self._cancel_active("команда /stop")
+        # Явный стоп оператора — автопродолжения не будет.
+        self._resume_index = None
+        response.success = True
+        response.message = ("Отмена миссии отправлена" if was_active
+                            else "Активной миссии нет")
         return response
 
     def _srv_record(self, request, response):
@@ -230,6 +249,7 @@ class GpsMission(Node):
         res = future.result().result
         self.goal_handle = None
         self.state = "DONE"
+        self._resume_index = None
         if res.missed_waypoints:
             missed = ", ".join(str(m.index) for m in res.missed_waypoints)
             self.get_logger().warning(

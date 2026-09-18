@@ -44,6 +44,8 @@ from robot_localization.srv import FromLL
 from sensor_msgs.msg import Imu, LaserScan, NavSatFix
 from tf2_msgs.msg import TFMessage
 
+from .diag_checks import ekf_warnings
+
 OK = "OK  "
 WARN = "WARN"
 FAIL = "FAIL"
@@ -202,10 +204,9 @@ class PreflightCheck(Node):
                 t.header.frame_id.lstrip("/")
 
     def _on_diag(self, msg: DiagnosticArray):
-        for st in msg.status:
-            if st.level >= 1 and ("ekf" in st.name.lower()
-                                  or "ekf" in st.hardware_id.lower()):
-                self.diag_warnings.append(f"{st.name}: {st.message}")
+        # level в ROS 2 — byte (IDL octet): в Python это bytes длины 1,
+        # а не int — приведение делаем в diag_checks (см. там историю).
+        self.diag_warnings.extend(ekf_warnings(msg.status))
 
     # -------------------------------------------------------------- отчёты
     def telemetry_report(self):

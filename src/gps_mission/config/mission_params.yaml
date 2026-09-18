@@ -19,3 +19,11 @@ gps_mission:
     action_wait_timeout: 30.0
     status_topic: "/gps_mission/status"
     gps_topic: "/gps/fix"
+    # Тумблер пульта (elrs_receiver -> /control_mode, std_msgs/Int8):
+    # 0=AUTO (положение 2), 1=MANUAL (положение 1), 2=AVOID, 3=RETURN_HOME
+    control_mode_topic: "/control_mode"
+    # true: тумблер в положение 2 (AUTO) сам запускает маршрут — или
+    # продолжает его с точки, на которой миссию прервал уход из AUTO;
+    # уход из AUTO отменяет миссию. false: старт только сервисом
+    # /gps_mission/start.
+    start_on_auto: true

@@ -12,9 +12,11 @@ imu_stm32_bridge ──/imu/data (кватернион ENU)───►├──
                                                  └──► ekf_map ──► TF map→odom
 nmea_navsat_driver ─/gps/fix─► navsat_transform ─/odometry/gps─┘  │
                                     └─ сервисы /datum /fromLL /toLL
-ydlidar ─/scan─► Nav2: global+local costmap → NavFn → DWB → BT ─/cmd_vel_nav
+ydlidar ─/scan─► Nav2: global+local costmap → NavFn → DWB → BT ─/cmd_vel/auto
 waypoints.yaml ─► gps_mission ─► action follow_gps_waypoints (nav2_waypoint_follower)
-/cmd_vel_nav ─► /cmd_vel/auto ─► cmd_switcher ─► /cmd_vel ─► kolesa_control
+/cmd_vel/auto ─► cmd_switcher ─► /cmd_vel ─► kolesa_control
+elrs_receiver ─/control_mode (тумблер)─► gps_mission: AUTO=старт/продолжение,
+                                        прочие положения=отмена миссии
 ```
 
 ### Одометрия (требование ТЗ)
