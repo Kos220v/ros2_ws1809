@@ -64,8 +64,18 @@ class GyroDriftCheck(Node):
         self.warn_dpm = float(g("warn_dpm").value)
         self.fail_dpm = float(g("fail_dpm").value)
         self.motion_thresh = float(g("motion_thresh_dps").value)
-        self.calib_service = str(g("calib_service").value)
-        self.calib_cli = self.create_client(Trigger, self.calib_service)
+        # кандидаты имени сервиса калибровки: заданный параметром +
+        # типовые варианты (мост без namespace, корень и т.п.)
+        primary = self.calib_service = str(g("calib_service").value)
+        candidates = [primary]
+        for alt in ("/imu/imu_stm32_bridge/gyro_calib",
+                    "/imu_stm32_bridge/gyro_calib",
+                    "/gyro_calib"):
+            if alt not in candidates:
+                candidates.append(alt)
+        self.calib_clis = [
+            (name, self.create_client(Trigger, name)) for name in candidates
+        ]
 
         self.samples = []
         self.t_first = None
@@ -122,16 +132,21 @@ class GyroDriftCheck(Node):
         log(f"смещения нуля (медианы): wx={res.wx_med_dps:+.3f}, "
             f"wy={res.wy_med_dps:+.3f}, wz={res.wz_med_dps:+.3f} °/с; "
             f"макс. отклонение (рывки) {res.max_dev_dps:.2f} °/с")
-        if self.calib_cli.service_is_ready():
-            log(f"сервис gyro_calib ({self.calib_service}): найден")
+        ready = [(n, c) for n, c in self.calib_clis if c.service_is_ready()]
+        if ready:
+            for n, _ in ready:
+                log(f"сервис gyro_calib: НАЙДЕН {n}")
+            if len(ready) == 1 and ready[0][0] != self.calib_service:
+                log(f"вызывайте: ros2 service call {ready[0][0]} "
+                    "std_srvs/srv/Trigger")
         else:
-            log(f"ВНИМАНИЕ: сервис gyro_calib ({self.calib_service}) НЕ "
-                "найден — вызов калибровки не пройдёт (waiting for "
-                "service). Диагностика: ros2 service list | grep calib; "
-                "если пусто — работает ли мост (imu_stm32_bridge в другом "
-                "пространстве имён?), не старая ли сборка (пересоберите "
-                "imu_stm32_bridge и перезапустите start.launch.py), "
-                "и обновите кэш графа: ros2 daemon stop && ros2 daemon start")
+            log(f"ВНИМАНИЕ: сервис gyro_calib НЕ найден ни по одному имени "
+                f"({', '.join(n for n, _ in self.calib_clis)}). Диагностика: "
+                "ros2 node list | grep imu; ros2 service list | grep calib; "
+                "ros2 daemon stop && ros2 daemon start; пересборка "
+                "imu_stm32_bridge + перезапуск start.launch.py. Если узел "
+                "моста виден, а сервисов нет — запущена старая сборка моста "
+                "(см. раздел 'waiting for service' в docs/CALIBRATION.md)")
         log(_VERDICT_TITLE.get(res.verdict, res.verdict))
         log("Что делать: " + res.recommendation)
         return 0 if res.verdict == "OK" else 1

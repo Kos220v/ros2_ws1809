@@ -106,6 +106,19 @@ def launch_setup(context, *args, **kwargs):
     nav2_remappings = [('cmd_vel', '/cmd_vel/auto')]
     nav2_common = dict(output='screen', parameters=[nav2_params])
 
+    # ------------------------------------------------ курс по GPS (антидрейф)
+    # Направление перемещения между фиксами -> /gps/heading (pose0 в ekf_map).
+    # Не даёт дрейфу кватерниона IMU накапливаться в map, пока робот едет.
+    gps_heading = Node(
+        package='gps_navigator',
+        executable='gps_heading',
+        name='gps_heading',
+        output='screen',
+        parameters=[{'gps_topic': '/gps/fix',
+                     'output_topic': '/gps/heading',
+                     'frame_id': 'map'}],
+    )
+
     controller_server = Node(
         package='nav2_controller', executable='controller_server',
         name='controller_server', remappings=nav2_remappings, **nav2_common)
@@ -164,6 +177,7 @@ def launch_setup(context, *args, **kwargs):
         ekf_odom,
         ekf_map,
         navsat,
+        gps_heading,
         controller_server,
         planner_server,
         behavior_server,

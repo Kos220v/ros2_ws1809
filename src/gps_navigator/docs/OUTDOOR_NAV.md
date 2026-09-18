@@ -61,12 +61,33 @@ elrs_receiver ─/control_mode (тумблер)─► gps_mission: AUTO=стар
   теряет TF и останавливает робота; при возврате фикса продолжает.
 * `xy_goal_tolerance: 2.0 м` согласован с точностью бытового GPS.
 
+## Курс по GPS (антидрейф)
+
+Узел `gps_heading` (запускается в `navigation.launch.py`) пока робот едет —
+сместился минимум на `min_dist_m` (2 м) за окно `window_s` (3 с) — публикует
+в `/gps/heading` направление фактического перемещения между фиксами
+(`PoseWithCovarianceStamped`, frame `map`, заполнен только yaw; дисперсия
+yaw растёт на малой скорости). `ekf_map` берёт его как `pose0` (только yaw).
+
+Зачем: курс из кватерниона IMU дрейфует (на текущей плате — десятки °/мин),
+а курс по перемещению GPS — независимое абсолютное наблюдение. Пока робот
+едет, ошибка курса в `map` не накапливается; на стоянке оценки нет — там
+дрейф и не мешает (позиция не интегрируется). Точность «якоря» — единицы
+градусов (шум GPS), поэтому кватернион IMU остаётся основным источником
+между GPS-обновлениями: EKF их просто взвешивает.
+
+Требования согласованы: оси `map` = восток/север без поворота (datum
+ставится с единичной ориентацией), курс GNSS — истинный, магнитное
+склонение узлу не нужно. Защиты: отброс «прыжков» GPS (> max_speed_mps
+между фиксами), сброс окна при откате времени (NTP), отсутствие публикации
+на стоянке и при плохом статусе фикса.
+
 ## Состав запуска
 
 | Слой | Файл | Что поднимает |
 |---|---|---|
 | железо | `project_start/launch/start.launch.py` | ELRS, kolesa_control, IMU, GNSS, лидар, robot_state_publisher, cmd_switcher, relay_reliable, robot_odom |
-| навигация | `gps_navigator/launch/navigation.launch.py` | ekf_odom, ekf_map, navsat_transform, controller/planner/behavior/bt_navigator/waypoint_follower, lifecycle_manager, gps_mission |
+| навигация | `gps_navigator/launch/navigation.launch.py` | ekf_odom, ekf_map, navsat_transform, gps_heading, controller/planner/behavior/bt_navigator/waypoint_follower, lifecycle_manager, gps_mission |
 | всё вместе | `gps_navigator/launch/route.launch.py` | оба слоя |
 
 ## Параметры, которые чаще всего нужно править

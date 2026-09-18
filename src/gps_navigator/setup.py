@@ -29,6 +29,7 @@ setup(
     entry_points={
         'console_scripts': [
             'preflight_check = gps_navigator.preflight_check:main',
+            'gps_heading = gps_navigator.gps_heading_node:main',
         ],
     },
 )

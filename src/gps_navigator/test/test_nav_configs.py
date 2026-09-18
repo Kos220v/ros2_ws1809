@@ -92,13 +92,34 @@ def test_yaw_only_from_imu_quaternion(ekf, node):
 
 @pytest.mark.parametrize("node", ["ekf_odom", "ekf_map"])
 def test_gps_orientation_never_used(ekf, node):
-    """Курс из GPS не берётся нигде (только позиция x,y в ekf_map)."""
+    """Ориентация из GPS-сообщений (navsat/магнитометр) не берётся нигде.
+
+    Единственное исключение — pose0 в ekf_map: курс по фактическому
+    перемещению (узел gps_heading, вычислен из последовательных позиций,
+    а не из поля orientation). Там должен быть включён ТОЛЬКО yaw:
+    позиция, roll и pitch выключены.
+    """
     params = ekf[node]["ros__parameters"]
     for key, cfg in params.items():
         if not key.endswith("_config") or key in ("odom0_config", "imu0_config"):
             continue
+        if key == "pose0_config":
+            assert cfg[0] is False and cfg[1] is False and cfg[2] is False, \
+                f"{node}.{key}: позиция из pose0 запрещена (только yaw)"
+            assert cfg[3] is False and cfg[4] is False, \
+                f"{node}.{key}: roll/pitch из pose0 запрещены"
+            assert cfg[5] is True, f"{node}.{key}: yaw должен быть включён"
+            continue
         assert cfg[3] is False and cfg[4] is False and cfg[5] is False, \
             f"{node}.{key}: ориентация из этого источника запрещена"
+
+
+def test_gps_heading_pose0_wiring(ekf):
+    """pose0 подключён к /gps/heading, абсолютный (не differential)."""
+    p = ekf["ekf_map"]["ros__parameters"]
+    assert p["pose0"] == "/gps/heading"
+    assert p["pose0_differential"] is False
+    assert p["pose0_relative"] is False
 
 
 def test_tf_split_between_two_ekf(ekf):

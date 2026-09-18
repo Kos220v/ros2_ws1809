@@ -130,6 +130,23 @@ ekf_map:
     imu0_yaw_offset: -0.8378   # ДЕРЖАТЬ ТАКИМ ЖЕ, как в ekf_odom
     imu0_ned_to_enu: false
 
+    # Курс по фактическому перемещению GPS (узел gps_heading этого же
+    # пакета). Пока робот едет (>= min_dist_m за окно), направление
+    # перемещения — независимое абсолютное наблюдение yaw: не даёт дрейфу
+    # кватерниона IMU накапливаться в системе map. Берём ТОЛЬКО yaw
+    # (позиция в сообщении замещена огромными ковариациями). На стоянке
+    # оценки нет — там дрейф и не мешает. frame_id сообщения = map.
+    pose0: /gps/heading
+    pose0_config: [false, false, false,
+                   false, false, true,       # только yaw
+                   false, false, false,
+                   false, false, false,
+                   false, false, false]
+    pose0_differential: false
+    pose0_relative: false
+    pose0_queue_size: 3
+    pose0_rejection_threshold: 5.0
+
     use_control: false
     process_noise_covariance: [0.50, 0.50, 0.06,
                                0.03, 0.03, 0.08,
