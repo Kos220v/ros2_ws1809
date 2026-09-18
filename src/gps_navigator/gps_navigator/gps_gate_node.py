@@ -85,8 +85,18 @@ class GpsFixGate(Node):
                 self.get_logger().info(
                     f"GPS-гейт: принято {st.accepted}, отброшено "
                     f"{st.rejected_total} (ковариация {st.rejected_cov}, "
-                    f"прыжки {st.rejected_jump}, битые {st.rejected_bad}); "
+                    f"прыжки {st.rejected_jump}, битые {st.rejected_bad}), "
+                    f"ресинхронизаций {st.resyncs}; "
                     f"последняя причина: {st.last_reject_reason}")
+            if self.gate._jump_streak >= 10 and st.resyncs == 0:
+                self.get_logger().warning(
+                    f"GPS нестабилен: {self.gate._jump_streak} отброшенных "
+                    "прыжков подряд без согласованности - координаты "
+                    "приёмника «бегут». Навигация по счислению (vx+IMU), "
+                    "map не телепортируется. Проверьте: одна ли публикация "
+                    "в /gps/fix (ros2 topic info /gps/fix -v), не «бежит» "
+                    "ли lat/lon (ros2 topic echo /gps/fix --field "
+                    "position), антенну и её кабель")
 
 
 def main(args=None):

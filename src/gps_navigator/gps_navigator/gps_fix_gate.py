@@ -14,7 +14,13 @@ TF map->odom через ekf_map: костмапы уезжают, а стары�
   (для nmea_navsat_driver cov[0] ~ (HDOP*5 м)^2, см. preflight);
 - «прыжок» от последнего принятого фикса быстрее max_jump_mps.
 
-Откат времени назад (NTP) сбрасывает состояние — как в gps_heading.
+Ресинхронизация опоры (робота перенесли на новое место): только когда
+ОТБРОШЕННЫЕ фиксы согласованы МЕЖДУ СОБОЙ (последовательные отброшенные
+фиксы не «бегут» относительно друг друга). Непрерывный мусор — приёмник
+«бежит» на километры в секунду — согласованности не имеет: он
+блокируется целиком, навигация остаётся на счислении (vx + кватернион
+IMU), и TF map->odom не телепортируется. Откат времени назад (NTP)
+сбрасывает состояние — как в gps_heading.
 """
 
 import math
@@ -28,6 +34,7 @@ class GateStats:
     rejected_cov: int = 0
     rejected_jump: int = 0
     rejected_bad: int = 0          # NaN/бесконечность в координатах
+    resyncs: int = 0               # принудительных ресинхронизаций опоры
     last_reject_reason: str = ""
 
     @property
@@ -39,12 +46,14 @@ class GateStats:
 class FixGate:
     max_h_error_m: float = 20.0
     max_jump_mps: float = 15.0
-    # сколько ПРЫЖКОВ подряд отбросить, прежде чем принять фикс как новую
-    # точку отсчёта (робота перенесли на другое место): одиночный
-    # мультитрейн-прыжок не проходит, устойчивое смещение — проходит
+    # сколько прыжков подряд (и при взаимно согласованных отброшенных
+    # фикса!) нужно, чтобы принять новую опору: одиночный мультитрейн не
+    # проходит; перенос робота (фиксы на новом месте неподвижны) — проходит;
+    # непрерывно «бегущий» приёмник — не проходит никогда (счисление)
     jump_resync_after: int = 5
     stats: GateStats = field(default_factory=GateStats)
     _last: Optional[Tuple[float, float, float]] = None   # (t, lat, lon)
+    _last_rejected: Optional[Tuple[float, float, float]] = None
     _jump_streak: int = 0
 
     def __post_init__(self):
@@ -55,7 +64,26 @@ class FixGate:
 
     def reset(self):
         self._last = None
+        self._last_rejected = None
         self._jump_streak = 0
+
+    def _rejected_consistent(self, t: float, lat: float, lon: float) -> bool:
+        """Отброшенные фиксы согласованы между собой (не «бегут»)?
+
+        Перенос робота: последовательные отброшенные фиксы на новом месте
+        почти неподвижны -> согласованы. Бегущий приёмник: каждый
+        отброшенный фикс далеко от предыдущего отброшенного -> нет.
+        """
+        if self._last_rejected is None:
+            return False
+        t0, la0, lo0 = self._last_rejected
+        dt = t - t0
+        if dt <= 1e-6:
+            return True
+        dy = (lat - la0) * 111319.49
+        dx = math.radians(lon - lo0) * 6378137.0 * \
+            math.cos(math.radians(0.5 * (lat + la0)))
+        return math.hypot(dx, dy) / dt <= self.max_jump_mps
 
     def accept(self, t: float, lat: float, lon: float,
                h_error_m: Optional[float]) -> bool:
@@ -85,17 +113,24 @@ class FixGate:
                 jump = math.hypot(dx, dy) / dt
                 if jump > self.max_jump_mps:
                     self._jump_streak += 1
-                    if self._jump_streak < self.jump_resync_after:
+                    if (self._jump_streak < self.jump_resync_after
+                            or not self._rejected_consistent(t, lat, lon)):
+                        self._last_rejected = (float(t), float(lat),
+                                               float(lon))
                         self.stats.rejected_jump += 1
                         self.stats.last_reject_reason = (
-                            f"прыжок {jump:.0f} м/с > {self.max_jump_mps:.0f} "
-                            "(мультитрейн/потеря решения)")
+                            f"прыжок {jump:.0f} м/с > "
+                            f"{self.max_jump_mps:.0f} (мультитрейн/"
+                            "потеря решения/мусор приёмника)")
                         return False
-                    # устойчивое смещение: робота реально перенесли —
-                    # ресинхронизация на новую точку отсчёта
+                    # перенесли робота: отброшенные фиксы согласованы
+                    # между собой и их уже jump_resync_after штук
+                    self.stats.resyncs += 1
                     self._jump_streak = 0
+                    self._last_rejected = None
                 else:
                     self._jump_streak = 0
+                    self._last_rejected = None
         self._last = (float(t), float(lat), float(lon))
         self.stats.accepted += 1
         return True

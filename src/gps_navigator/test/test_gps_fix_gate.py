@@ -54,6 +54,36 @@ class TestFixGateLogic:
         assert g.accept(4.0, 56.3 + 503.0 / 111319.49, 43.9, 3.0) is True
         assert g.stats.rejected_jump == 2
 
+    def test_racing_receiver_never_resyncs(self):
+        # реальный случай с робота: приёмник «бежит» ~3 км/с — каждый
+        # отброшенный фикс далеко от предыдущего отброшенного -> ресинхрон
+        # запрещён, навигация остаётся на счислении
+        g = FixGate(max_jump_mps=15.0, jump_resync_after=5)
+        g.accept(0.0, 56.3, 43.9, 3.0)
+        for i in range(1, 21):
+            assert g.accept(float(i), 56.3 + i * 100.0 / 111319.49,
+                            43.9, 3.0) is False
+        assert g.stats.accepted == 1
+        assert g.stats.resyncs == 0
+        assert g.stats.rejected_jump == 20
+
+    def test_racing_then_stable_resyncs(self):
+        # мусор кончился, приёмник стоит на месте: взаимно согласованные
+        # отброшенные фиксы дают ресинхрон
+        g = FixGate(max_jump_mps=15.0, jump_resync_after=5)
+        g.accept(0.0, 56.3, 43.9, 3.0)
+        for i in range(1, 6):
+            assert g.accept(float(i), 56.3 + i * 100.0 / 111319.49,
+                            43.9, 3.0) is False
+        # приёмник «остановился» на новом месте: счётчик прыжков уже
+        # набран, первый же согласованный (неподвижный относительно
+        # предыдущего отброшенного) фикс даёт ресинхрон
+        assert g.accept(6.0, 56.3 + 498.0 / 111319.49, 43.9, 3.0) is True
+        assert g.stats.resyncs == 1
+        # и дальше обычное движение свободно
+        assert g.accept(7.0, 56.3 + 498.5 / 111319.49, 43.9, 3.0) is True
+        assert g.accept(8.0, 56.3 + 499.0 / 111319.49, 43.9, 3.0) is True
+
     def test_single_jump_then_normal_motion_no_resync(self):
         g = FixGate(max_jump_mps=15.0, jump_resync_after=5)
         g.accept(0.0, 56.3, 43.9, 3.0)
