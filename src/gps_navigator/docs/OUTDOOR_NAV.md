@@ -94,6 +94,11 @@ colcon build --packages-select gps_mission gps_navigator
 source install/setup.bash
 # установленная копия содержит последний фикс? (>0 — да)
 grep -c probe_geo_serialization install/gps_mission/lib/python3.12/site-packages/gps_mission/gps_mission_node.py
+
+# ВАЖНО: python-процесс импортирует код при СТАРТЕ. Если launch-сессия
+# стартовала до пересборки — её узлы работают со СТАРЫМ кодом из памяти
+# (respawn подхватит новый, но только после смерти старого). После каждой
+# пересборки: Ctrl-C и запуск launch заново.
 ```
 
 Если `~/ros2_ws` — НЕ git-клон (файлы переносятся вручную), обновление такое:
