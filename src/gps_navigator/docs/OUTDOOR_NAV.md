@@ -82,6 +82,36 @@ yaw растёт на малой скорости). `ekf_map` берёт его 
 между фиксами), сброс окна при откате времени (NTP), отсутствие публикации
 на стоянке и при плохом статусе фикса.
 
+## Известная проблема: abort «geo_pose convert_from_py Assertion failed»
+
+Симптом: при старте маршрута процесс `gps_mission_node` падает с
+`Assertion 'strncmp("geographic_msgs.msg._geo_pose.GeoPose", ...)' failed`
+(обычно сразу после строки «datum -> ...»). Это падение **внутри
+генерированных ROS-привязок** (rosidl_generator_py) при сериализации
+запроса `SetDatum` — в окружении найдена вторая, устаревшая копия
+`geographic_msgs` (например, остатки старой сборки в underlay или
+`~/.local/lib/python3.12/site-packages`). Код gps_mission скалярные поля
+только заполняет — причина всегда снаружи.
+
+Что сделано в коде: вызов `SetDatum` вынесен в одноразовый подпроцесс
+(`ros2 service call`), падение такого процесса узел gps_mission не
+затрагивает; если datum не установится, navsat_transform возьмёт ноль
+`map` по первому GPS-фиксу — маршрут поедет и так.
+
+Найти виновника в окружении:
+
+```bash
+python3 -c "import geographic_msgs.msg as g; print(g.__file__); print(g.GeoPose)"
+python3 -c "from robot_localization.srv import SetDatum; r=SetDatum.Request(); print(type(r.geo_pose))"
+```
+
+Ожидается `<class 'geographic_msgs.msg._geo_pose.GeoPose'>` и путь в
+`/opt/ros/jazzy/...`. Если класс печатается как
+`geographic_msgs.msg.GeoPose` (без `_geo_pose`) или файл лежит вне
+`/opt/ros/jazzy` — вот эта копия и ломает сериализацию: уберите её из
+PYTHONPATH (часто `~/.local/...` или старый `install/` в underlay),
+затем `ros2 daemon stop` и перезапуск стека.
+
 ## Состав запуска
 
 | Слой | Файл | Что поднимает |

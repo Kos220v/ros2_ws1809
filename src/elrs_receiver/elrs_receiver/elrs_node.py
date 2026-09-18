@@ -215,8 +215,14 @@ class ELRSReceiverNode(Node):
         
         self.parser = CRSFParser()
         
-        self.mode_check_timer = self.create_timer(0.1, self.check_mode_switch) 
-        self.timer = self.create_timer(0.01, self.read_serial)                  
+        self.mode_check_timer = self.create_timer(0.1, self.check_mode_switch)
+        # Периодическая републикация текущего режима: потребители
+        # (/control_mode) могут перезапуститься (respawn) в любой момент и
+        # не должны ждать следующего переключения тумблера, чтобы узнать
+        # положение, в котором он стоит.
+        self.mode_republish_timer = self.create_timer(
+            1.0, self.republish_mode)
+        self.timer = self.create_timer(0.01, self.read_serial)
         self.cmd_vel_timer = self.create_timer(0.05, self.publish_cmd_vel)        
         
         self.last_toggle_value = 0.5
@@ -252,7 +258,12 @@ class ELRSReceiverNode(Node):
         new_mode = msg.data
         if self.set_control_mode(new_mode):
             self.get_logger().info(f'External command: Mode changed to {new_mode}')
-    
+
+    def republish_mode(self):
+        msg = Int8()
+        msg.data = self.current_mode
+        self.mode_publisher.publish(msg)
+
     def set_control_mode(self, new_mode):
         valid_modes = [ControlModes.AUTO, ControlModes.MANUAL, ControlModes.AVOID, ControlModes.RETURN_HOME]
         if new_mode in valid_modes:
